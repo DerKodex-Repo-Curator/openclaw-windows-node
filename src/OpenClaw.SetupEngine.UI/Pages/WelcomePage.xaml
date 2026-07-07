@@ -31,7 +31,7 @@
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
                     BorderThickness="1"
-                    AutomationProperties.Name="Install a local gateway (WSL), recommended">
+                    AutomationProperties.Name="Install on Windows natively, recommended">
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
                     <Border Grid.Column="0" Width="44" Height="44" CornerRadius="6"
                             Background="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Top">
@@ -41,7 +41,7 @@
                     <StackPanel Grid.Column="1" Spacing="3">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock x:Name="InstallTitle"
-                                       Text="Install a local gateway (WSL)"
+                                       Text="Install on Windows (native)"
                                        Style="{StaticResource BodyStrongTextBlockStyle}"
                                        VerticalAlignment="Center" />
                             <Border CornerRadius="4" Padding="7,1" VerticalAlignment="Center"
@@ -54,7 +54,34 @@
                         <TextBlock TextWrapping="Wrap"
                                    Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   Text="A private, self-hosted OpenClaw gateway in an isolated Ubuntu WSL instance. We'll show exactly what gets installed before anything runs." />
+                                   Text="The simplest path. Installs OpenClaw directly on Windows with managed startup — no WSL required." />
+                    </StackPanel>
+                    <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="14" IsTextScaleFactorEnabled="False"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                </Grid>
+            </Button>
+
+            <Button x:Name="WslButton" Click="WslButton_Click"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                    Padding="16" CornerRadius="4"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    AutomationProperties.Name="Install in WSL">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                    <Border Grid.Column="0" Width="44" Height="44" CornerRadius="6"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}" VerticalAlignment="Top">
+                        <FontIcon Glyph="&#xE756;" FontSize="20" IsTextScaleFactorEnabled="False"
+                                  Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="3">
+                        <TextBlock x:Name="WslInstallTitle"
+                                   Text="Install in WSL"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Text="Uses an isolated Ubuntu WSL 2 instance for maximum Linux compatibility. Requires virtualization and WSL 2." />
                     </StackPanel>
                     <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="14" IsTextScaleFactorEnabled="False"
                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />

@@ -528,6 +528,37 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void CapabilitiesPage_ReflectsSelectedGatewayRuntime()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
+
+        Assert.Contains("x:Name=\"SetupTitleText\"", xaml);
+        Assert.Contains("x:Name=\"InstallAdminBorder\"", xaml);
+        Assert.Contains("x:Name=\"InstallRuntimeBadgeText\"", xaml);
+        Assert.Contains("_config.InstallMode == GatewayInstallMode.NativeWindows", source);
+        Assert.Contains("\"Set up the Windows gateway\"", source);
+        Assert.Contains("InstallAdminBorder.Visibility = _config.InstallMode == GatewayInstallMode.Wsl", source);
+        Assert.Contains("? \"No WSL\"", source);
+    }
+
+    [Fact]
+    public void ProgressPage_NativeGroupsFollowPipelineOrder()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "ProgressPage.xaml.cs"));
+
+        AssertInOrder(
+            source,
+            "[\"begin-native-install\", \"stop-conflicting-gateways\"]",
+            "[\"install-native-cli\"]",
+            "[\"native-service-cleanup\", \"cleanup-gateway\"]",
+            "[\"preflight-port\"]",
+            "[\"configure-gateway\", \"install-service\"]");
+    }
+
+    [Fact]
     public void CapabilitiesPage_PermissionProbeFaultsShowInlineWarning()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
@@ -659,7 +690,7 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
-    public void Settings_OnboardCardRequiresActiveManagedWslGateway()
+    public void Settings_OnboardCardRequiresActiveSetupManagedLocalGateway()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Tray.WinUI", "Pages", "SettingsPage.xaml"));
@@ -667,8 +698,8 @@ public sealed class AppRefactorContractTests
 
         Assert.Contains("x:Name=\"OpenClawOnboardCard\"", xaml);
         Assert.Contains("Visibility=\"Collapsed\"", xaml);
-        Assert.Contains("GatewayHostAccessClassifier.Classify(CurrentApp.Registry?.GetActive())", code);
-        Assert.Contains("OpenClawOnboardCard.Visibility = activeGatewayAccess.CanControlWslGateway", code);
+        Assert.Contains("var activeGateway = CurrentApp.Registry?.GetActive()", code);
+        Assert.Contains("SetupExistingGatewayClassifier.IsSetupManagedLocalGateway(activeGateway)", code);
         Assert.Contains("CurrentApp.Registry?.Load();", code);
         Assert.Contains("OpenClawOnboardCard.Visibility = Visibility.Collapsed;", code);
     }
@@ -714,11 +745,18 @@ public sealed class AppRefactorContractTests
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Tray.WinUI", "Pages", "SettingsPage.xaml.cs"));
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Tray.WinUI", "Pages", "SettingsPage.xaml"));
 
+        Assert.Contains("GatewayInstallModeDetector.DetectInstalled", source);
+        Assert.Contains("GetGatewayRemovalDetails(installedMode)", source);
+        Assert.Contains("Native Windows gateway service and managed startup files", source);
+        Assert.Contains("WSL distro: {AppIdentity.SetupDistroName}", source);
         Assert.Contains("ResolveCurrentExecutablePath()", source);
         Assert.Contains("psi.ArgumentList.Add(\"--uninstall\")", source);
         Assert.Contains("proc.WaitForExitAsync(_uninstallCts.Token)", source);
         Assert.Contains("proc.Kill(entireProcessTree: true)", source);
+        Assert.Contains("managed native Windows or WSL local gateway", xaml);
+        Assert.DoesNotContain("Skips WSL installation", xaml);
         Assert.DoesNotContain("OpenClaw.SetupEngine.Program.Main(setupArgs)", source);
         Assert.DoesNotContain("OpenClaw.SetupEngine.UI.exe", source);
     }
@@ -750,14 +788,16 @@ public sealed class AppRefactorContractTests
         var method = ExtractMethod(source, "StartButtonClickAsync");
 
         Assert.Contains("InstallButton.IsEnabled = false", method);
-        Assert.Contains("InstallTitle.Text = CheckingButtonText", method);
+        Assert.Contains("WslButton.IsEnabled = false", method);
+        Assert.Contains("activeTitle.Text = CheckingButtonText", method);
         Assert.Contains("CheckingButtonText", method);
         Assert.Contains("var setupWindow = SetupWindow.Active", method);
         Assert.Contains("await Task.Run(() => ExistingConfigDetector.Detect", method);
         Assert.Contains("setupWindow is null or { IsClosed: true } || xamlRoot is null", method);
         Assert.Contains("setupWindow is { IsClosed: false }", method);
-        Assert.Contains("InstallTitle.Text = InstallButtonText", method);
+        Assert.Contains("activeTitle.Text = installMode == GatewayInstallMode.NativeWindows", method);
         Assert.Contains("InstallButton.IsEnabled = true", method);
+        Assert.Contains("WslButton.IsEnabled = true", method);
         AssertInOrder(
             method,
             "InstallButton.IsEnabled = false",

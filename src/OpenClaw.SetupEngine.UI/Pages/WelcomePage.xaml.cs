@@ -12,7 +12,8 @@ namespace OpenClaw.SetupEngine.UI.Pages;
 
 public sealed partial class WelcomePage : Page
 {
-    private const string InstallButtonText = "Install a local gateway (WSL)";
+    private const string InstallButtonText = "Install on Windows (native)";
+    private const string WslButtonText = "Install in WSL";
     private const string CheckingButtonText = "Checking existing setup...";
     private SetupConfig? _config;
 
@@ -52,18 +53,26 @@ public sealed partial class WelcomePage : Page
 
     private void StartButton_Click(object sender, RoutedEventArgs e) =>
         AsyncEventHandlerGuard.Run(
-            StartButtonClickAsync,
+            () => StartButtonClickAsync(GatewayInstallMode.NativeWindows),
             NullLogger.Instance,
             nameof(StartButton_Click));
 
-    private async Task StartButtonClickAsync()
+    private void WslButton_Click(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            () => StartButtonClickAsync(GatewayInstallMode.Wsl),
+            NullLogger.Instance,
+            nameof(WslButton_Click));
+
+    private async Task StartButtonClickAsync(GatewayInstallMode installMode)
     {
         var config = _config ?? throw new InvalidOperationException("Setup configuration has not been loaded.");
         var setupWindow = SetupWindow.Active;
         var dataDir = setupWindow?.DataDir ?? SetupContext.ResolveDataDir();
 
         InstallButton.IsEnabled = false;
-        InstallTitle.Text = CheckingButtonText;
+        WslButton.IsEnabled = false;
+        var activeTitle = installMode == GatewayInstallMode.NativeWindows ? InstallTitle : WslInstallTitle;
+        activeTitle.Text = CheckingButtonText;
         var navigating = false;
         try
         {
@@ -72,13 +81,15 @@ public sealed partial class WelcomePage : Page
             if (setupWindow is null or { IsClosed: true } || xamlRoot is null)
                 return;
 
-            var summary = ExistingConfigDetector.BuildReplacementSummary(existing);
+            var summary = ExistingConfigDetector.BuildReplacementSummary(existing, installMode);
 
             var dialog = new ContentDialog
             {
-                Title = existing.HasLocalGateway || existing.HasDistro
-                    ? "Replace existing WSL gateway?"
-                    : "Install a new WSL gateway?",
+                Title = installMode == GatewayInstallMode.NativeWindows
+                    ? "Install a native Windows gateway?"
+                    : existing.HasLocalGateway || existing.HasDistro
+                        ? "Replace existing WSL gateway?"
+                        : "Install a new WSL gateway?",
                 Content = summary,
                 PrimaryButtonText = "Continue",
                 CloseButtonText = "Cancel",
@@ -90,6 +101,8 @@ public sealed partial class WelcomePage : Page
             if (result != ContentDialogResult.Primary)
                 return;
 
+            config.InstallMode = installMode;
+            GatewayLkgVersion.ApplyToConfig(config);
             navigating = true;
             setupWindow.NavigateToCapabilities();
         }
@@ -97,8 +110,11 @@ public sealed partial class WelcomePage : Page
         {
             if (!navigating && setupWindow is { IsClosed: false })
             {
-                InstallTitle.Text = InstallButtonText;
+                activeTitle.Text = installMode == GatewayInstallMode.NativeWindows
+                    ? InstallButtonText
+                    : WslButtonText;
                 InstallButton.IsEnabled = true;
+                WslButton.IsEnabled = true;
             }
         }
     }
