@@ -68,6 +68,7 @@ public sealed partial class WelcomePage : Page
         var config = _config ?? throw new InvalidOperationException("Setup configuration has not been loaded.");
         var setupWindow = SetupWindow.Active;
         var dataDir = setupWindow?.DataDir ?? SetupContext.ResolveDataDir();
+        var localDataDir = setupWindow?.LocalDataDir ?? SetupContext.ResolveLocalDataDir();
 
         InstallButton.IsEnabled = false;
         WslButton.IsEnabled = false;
@@ -76,7 +77,10 @@ public sealed partial class WelcomePage : Page
         var navigating = false;
         try
         {
-            var existing = await Task.Run(() => ExistingConfigDetector.Detect(dataDir, config.DistroName));
+            var existing = await Task.Run(() => ExistingConfigDetector.Detect(
+                dataDir,
+                localDataDir,
+                config));
             var xamlRoot = XamlRoot;
             if (setupWindow is null or { IsClosed: true } || xamlRoot is null)
                 return;
@@ -85,11 +89,7 @@ public sealed partial class WelcomePage : Page
 
             var dialog = new ContentDialog
             {
-                Title = installMode == GatewayInstallMode.NativeWindows
-                    ? "Install a native Windows gateway?"
-                    : existing.HasLocalGateway || existing.HasDistro
-                        ? "Replace existing WSL gateway?"
-                        : "Install a new WSL gateway?",
+                Title = ExistingConfigDetector.BuildReplacementTitle(existing, installMode),
                 Content = summary,
                 PrimaryButtonText = "Continue",
                 CloseButtonText = "Cancel",
