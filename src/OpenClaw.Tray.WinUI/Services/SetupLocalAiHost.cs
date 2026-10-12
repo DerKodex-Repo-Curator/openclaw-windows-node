@@ -122,7 +122,9 @@ internal sealed class SetupLocalAiHost(
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException) { damaged = true; }
         progress?.Report(LocalAiSetupStage.CheckingHardware);
         var hardware = await probeHardware(ct);
-        var eligibility = LocalInferenceEligibility.Evaluate(hardware, install?.Manifest.ModelCatalogId);
+        var eligibility = install is null
+            ? LocalInferenceEligibility.Evaluate(hardware)
+            : LocalInferenceEligibility.EvaluateInstalled(hardware, install.Manifest.ModelCatalogId);
         bool verified = false;
         if (install is not null)
         {
@@ -136,8 +138,11 @@ internal sealed class SetupLocalAiHost(
         if (target.IsNative)
             target = target with { ModelCatalogId = install?.Manifest.ModelCatalogId,
                 RequestedLocalAiPort = install?.Manifest.RequestedPort };
+        var ownership = target.IsNative && _nativeTransport is { } nativeTransport
+            ? await nativeLifecycle!.ObserveOwnershipAsync(_nativeRecord!, nativeTransport, install, ct)
+            : (NativeLocalAiOwnershipState?)null;
         return LocalAiOnboardingSnapshot.Project(target, eligibility, install, verified, damaged,
-            getRuntime()?.Snapshot, Identity(install));
+            getRuntime()?.Snapshot, Identity(install), nativeOwnership: ownership);
     }
 
     public async Task<SetupLocalAiTarget> RevalidateReviewAsync(LocalAiOnboardingSnapshot selected, CancellationToken ct)

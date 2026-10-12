@@ -112,31 +112,36 @@ internal sealed class LocalAiModelFileVerifier : ILocalAiModelFileVerifier
 
 /// <summary>
 /// Reuses an installation only when its manifest, runtime, and model still match
-/// the selected immutable recipe. Recovery may retain a matching receipt while
-/// the individual acquirers repair incomplete runtime or model assets.
+/// the selected immutable recipe. A structurally incomplete runtime is reacquired
+/// from its pinned archives while the verified model and rollback receipt are retained.
+/// Recovery mode additionally permits repair of incomplete model assets.
 /// </summary>
 internal sealed class LocalAiInstallReconciler
 {
     private readonly ILlamaRuntimeInspector _runtimeInspector;
     private readonly ILocalAiModelFileVerifier _modelVerifier;
     private readonly Func<string> _cacheRootResolver;
+    private readonly LocalAiVcRuntimeStager? _vcRuntimeStager;
 
     public LocalAiInstallReconciler()
         : this(
             new WindowsLlamaRuntimeInspector(),
             new LocalAiModelFileVerifier(),
-            HuggingFaceHubCache.ResolveCacheRoot)
+            HuggingFaceHubCache.ResolveCacheRoot,
+            new LocalAiVcRuntimeStager(AppContext.BaseDirectory))
     {
     }
 
     internal LocalAiInstallReconciler(
         ILlamaRuntimeInspector runtimeInspector,
         ILocalAiModelFileVerifier modelVerifier,
-        Func<string>? cacheRootResolver = null)
+        Func<string>? cacheRootResolver = null,
+        LocalAiVcRuntimeStager? vcRuntimeStager = null)
     {
         _runtimeInspector = runtimeInspector ?? throw new ArgumentNullException(nameof(runtimeInspector));
         _modelVerifier = modelVerifier ?? throw new ArgumentNullException(nameof(modelVerifier));
         _cacheRootResolver = cacheRootResolver ?? HuggingFaceHubCache.ResolveCacheRoot;
+        _vcRuntimeStager = vcRuntimeStager;
     }
 
     public async Task<LocalAiReconcileResult> ReconcileAsync(
@@ -180,8 +185,10 @@ internal sealed class LocalAiInstallReconciler
             }
 
             ValidateReplacementSource(install, plan, selectedGpuId, localDataDirectory);
-            LlamaRuntimeInspection replacementRuntime = await _runtimeInspector
-                .InspectAsync(Path.GetDirectoryName(install.ExecutablePath)!, cancellationToken)
+            LlamaRuntimeInspection replacementRuntime = await StageAndInspectRuntimeAsync(
+                    Path.GetDirectoryName(install.ExecutablePath)!,
+                    plan.Runtime,
+                    cancellationToken)
                 .ConfigureAwait(false);
             return new LocalAiReconcileResult(
                 Reused: false,
@@ -201,9 +208,13 @@ internal sealed class LocalAiInstallReconciler
             !string.Equals(install.Manifest.SelectedGpuId, selectedGpuId, StringComparison.Ordinal) &&
             GpuIdsMatch(install.Manifest.SelectedGpuId, selectedGpuId);
 
-        LlamaRuntimeInspection inspection = await _runtimeInspector
-            .InspectAsync(Path.GetDirectoryName(install.ExecutablePath)!, cancellationToken)
-            .ConfigureAwait(false);
+        string runtimeDirectory = Path.GetDirectoryName(install.ExecutablePath)!;
+        LlamaRuntimeInspection inspection = runtimeUpgradePending
+            ? await _runtimeInspector
+                .InspectAsync(runtimeDirectory, plan.Runtime, cancellationToken)
+                .ConfigureAwait(false)
+            : await StageAndInspectRuntimeAsync(runtimeDirectory, plan.Runtime, cancellationToken)
+                .ConfigureAwait(false);
         bool activeModelIsValid = await _modelVerifier
             .VerifyActiveAsync(install, plan.Model.Weights, cancellationToken)
             .ConfigureAwait(false);
@@ -249,35 +260,47 @@ internal sealed class LocalAiInstallReconciler
                 PendingReplacement: pendingReplacement);
         }
 
-        if (!inspection.IsValid || !modelIsValid)
+        if (!inspection.IsValid && modelIsValid)
+        {
+            install = await MigrateLegacyModelAsync(
+                    install,
+                    paths,
+                    localDataDirectory,
+                    plan,
+                    selectedGpuId,
+                    migrationProgress,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            // A structurally incomplete runtime is safe to reacquire from the pinned
+            // archives without forcing the user to uninstall or re-download a verified
+            // model. Retain the receipt as the rollback baseline until the replacement
+            // runtime has been persisted successfully.
+            return new LocalAiReconcileResult(
+                Reused: false,
+                ResolvedInstall: null,
+                RuntimeInstall: null,
+                ModelInstall: CreateModelInstall(install, localDataDirectory),
+                OriginalInstall: originalInstall,
+                AdditionalModelInstalls: CreateAdditionalModelInstalls(install),
+                PendingReplacement: pendingReplacement);
+        }
+
+        if (!modelIsValid)
         {
             if (!allowIncompleteInstallation)
             {
-                throw new InvalidDataException(!inspection.IsValid
-                    ? inspection.Error ?? "The managed llama-server runtime no longer passes validation."
-                    : "The managed Local AI model no longer matches its pinned size and SHA-256 digest.");
-            }
-
-            if (modelIsValid)
-            {
-                install = await MigrateLegacyModelAsync(
-                        install,
-                        paths,
-                        localDataDirectory,
-                        plan,
-                        selectedGpuId,
-                        migrationProgress,
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                throw new InvalidDataException(
+                    "The managed Local AI model no longer matches its pinned size and SHA-256 digest.");
             }
 
             return new LocalAiReconcileResult(
                 Reused: false,
                 ResolvedInstall: null,
                 RuntimeInstall: inspection.IsValid ? CreateRuntimeInstall(install) : null,
-                ModelInstall: modelIsValid ? CreateModelInstall(install, localDataDirectory) : null,
+                ModelInstall: null,
                 OriginalInstall: originalInstall,
-                AdditionalModelInstalls: modelIsValid ? CreateAdditionalModelInstalls(install) : null,
+                AdditionalModelInstalls: null,
                 PendingReplacement: pendingReplacement);
         }
 
@@ -309,6 +332,28 @@ internal sealed class LocalAiInstallReconciler
             OriginalInstall: allowIncompleteInstallation ? originalInstall : null,
             AdditionalModelInstalls: CreateAdditionalModelInstalls(install),
             PendingReplacement: pendingReplacement);
+    }
+
+    private async Task<LlamaRuntimeInspection> StageAndInspectRuntimeAsync(
+        string runtimeDirectory,
+        LlamaRuntimeVariant runtime,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _vcRuntimeStager?.Stage(runtimeDirectory);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return new LlamaRuntimeInspection(
+                false,
+                $"The app-local Visual C++ runtime could not be staged for llama-server: {exception.Message}");
+        }
+
+        return await _runtimeInspector
+            .InspectAsync(runtimeDirectory, runtime, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static void ValidateReplacementSource(
@@ -350,10 +395,11 @@ internal sealed class LocalAiInstallReconciler
     public async Task<bool> InspectAsync(LocalAiResolvedInstall install, CancellationToken ct)
     {
         var model = LocalModelCatalog.FindInstalled(install.Manifest.ModelCatalogId);
-        if (model is null)
+        var installedRuntime = LlamaRuntimeCatalog.FindInstalled(install.Manifest.RuntimeId);
+        if (model is null || installedRuntime is null)
             return false;
         var runtime = await _runtimeInspector.InspectAsync(
-            Path.GetDirectoryName(install.ExecutablePath)!, ct).ConfigureAwait(false);
+            Path.GetDirectoryName(install.ExecutablePath)!, installedRuntime, ct).ConfigureAwait(false);
         return runtime.IsValid &&
             await _modelVerifier.VerifyActiveAsync(install, model.Weights, ct).ConfigureAwait(false);
     }
