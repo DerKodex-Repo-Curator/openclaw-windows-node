@@ -219,10 +219,10 @@ public sealed class SetupWindowMinimumSizeTests(UIThreadFixture ui, ITestOutputH
         return minimum;
     }
 
-    internal static async Task SaveViewportsAsync(SetupWindow window, Page page, UIThreadFixture ui,
+    internal static async Task SaveViewportsAsync(Window window, Page page, UIThreadFixture ui,
         ITestOutputHelper output, string name)
     {
-        var root = Assert.IsType<Grid>(window.Content);
+        var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
         var scroll = Assert.Single(Assert.IsType<Grid>(page.Content).Children.OfType<ScrollViewer>());
         root.UpdateLayout();
         Assert.True(scroll.ViewportHeight >= 100, $"Scrollable content is a sliver: {scroll.ViewportHeight} DIPs");
